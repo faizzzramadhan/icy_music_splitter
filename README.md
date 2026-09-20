@@ -91,3 +91,20 @@ ICY MUSIC SPLITTER/
 2. **Meta Demucs AI (`htdemucs_6s`)**:
    - Automatically detected if `demucs` and `torch` are installed.
    - Isolates Drums, Bass, Guitar, Piano, Vocals, Strings, and Others with deep neural networks.
+
+---
+
+## 🌐 Free Cloud Deployment (Go Live 24/7)
+
+### Deploy on Hugging Face Spaces (100% Free with Docker)
+1. Push this repository to your GitHub account (`https://github.com/faizzzramadhan/icy-music-splitter`).
+2. Visit [Hugging Face Spaces](https://huggingface.co/new-space).
+3. Set Space Name: `icy-music-splitter`.
+4. Choose **Docker** as the Space SDK (Blank).
+5. Link your GitHub repository. It will automatically build and host the studio live for free!
+
+### Deploy on Render / Railway
+1. Sign in to [Render.com](https://render.com) or [Railway.app](https://railway.app).
+2. Choose **New Web Service** -> Connect GitHub repository.
+3. Select **Docker** environment -> Deploy!
+
