@@ -627,18 +627,36 @@ el.btnExecuteDownload.onclick = async () => {
       isDemo: state.isDemo
     };
 
-    const res = await fetch("/api/download-zip", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || "Failed to download stems");
+    let blob = null;
+    try {
+      const res = await fetch("/api/download-zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        blob = await res.blob();
+      }
+    } catch (e) {
+      console.warn("Backend ZIP unavailable, falling back to in-browser JSZip...", e);
     }
 
-    const blob = await res.blob();
+    // Client-side ZIP generation fallback (works on Vercel static hosting)
+    if (!blob && window.JSZip) {
+      const zip = new window.JSZip();
+      for (const stemKey of selectedStemsArray) {
+        const stem = state.stems[stemKey];
+        if (stem && stem.url) {
+          const audioResp = await fetch(stem.url);
+          const audioData = await audioResp.blob();
+          zip.file(`${stemKey}.mp3`, audioData);
+        }
+      }
+      blob = await zip.generateAsync({ type: "blob" });
+    }
+
+    if (!blob) throw new Error("Failed to generate stems archive");
+
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
@@ -812,9 +830,18 @@ function loadSeparatedSong(jobId, meta, stems, mode) {
 // Load Demo song on initial startup
 async function initDemo() {
   try {
-    const res = await fetch("/api/demo");
-    if (!res.ok) throw new Error("Failed to load demo");
-    const demo = await res.json();
+    let demo = null;
+    try {
+      const res = await fetch("/api/demo");
+      if (res.ok) demo = await res.json();
+    } catch (e) {}
+
+    if (!demo) {
+      const staticRes = await fetch("/demo/demo-info.json");
+      if (staticRes.ok) demo = await staticRes.json();
+    }
+
+    if (!demo) throw new Error("Could not load demo track");
 
     state.isDemo = true;
     state.songTitle = demo.songTitle;
