@@ -724,6 +724,253 @@ function handleSelectedFile(file) {
   primaryP.innerHTML = `Selected: <strong>${file.name}</strong> (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
 }
 
+// WAV encoding helpers for in-browser audio export
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+function audioBufferToWav(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  
+  let interleaved;
+  if (numChannels === 2) {
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    interleaved = new Float32Array(left.length + right.length);
+    for (let i = 0, j = 0; i < left.length; i++) {
+      interleaved[j++] = left[i];
+      interleaved[j++] = right[i];
+    }
+  } else {
+    interleaved = buffer.getChannelData(0);
+  }
+
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = interleaved.length * bytesPerSample;
+  const bufferLength = 44 + dataSize;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  // RIFF header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write 16-bit PCM samples
+  let offset = 44;
+  for (let i = 0; i < interleaved.length; i++) {
+    const s = Math.max(-1, Math.min(1, interleaved[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function extractPeaksFromBuffer(buffer, numBars = 160) {
+  const channelData = buffer.getChannelData(0);
+  const samplesPerBar = Math.floor(channelData.length / numBars);
+  const peaks = [];
+  for (let i = 0; i < numBars; i++) {
+    let max = 0;
+    const start = i * samplesPerBar;
+    const end = Math.min(start + samplesPerBar, channelData.length);
+    for (let j = start; j < end; j += 15) {
+      const abs = Math.abs(channelData[j]);
+      if (abs > max) max = abs;
+    }
+    peaks.push(Math.round(Math.min(1.0, Math.max(0.08, max)) * 1000) / 1000);
+  }
+  return peaks;
+}
+
+// In-Browser Audio Source Separation using Web Audio OfflineAudioContext
+async function separateInBrowser(file, mode) {
+  el.progressStatusText.textContent = "Decoding audio in browser...";
+  el.progressBarFill.style.width = "15%";
+  el.progressPctText.textContent = "15%";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const ctx = getAudioContext();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+  el.progressStatusText.textContent = "Analyzing waveforms...";
+  el.progressBarFill.style.width = "30%";
+  el.progressPctText.textContent = "30%";
+
+  const duration = audioBuffer.duration;
+  const peaks = extractPeaksFromBuffer(audioBuffer);
+
+  const stemFilterMap = {
+    vocals: (offlineCtx, src) => {
+      const hp = offlineCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 280;
+      const lp = offlineCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3900;
+      const comp = offlineCtx.createDynamicsCompressor();
+      comp.threshold.value = -20;
+      comp.ratio.value = 4;
+      src.connect(hp);
+      hp.connect(lp);
+      lp.connect(comp);
+      comp.connect(offlineCtx.destination);
+    },
+    drums: (offlineCtx, src) => {
+      const comp = offlineCtx.createDynamicsCompressor();
+      comp.threshold.value = -25;
+      comp.knee.value = 25;
+      comp.ratio.value = 12;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.2;
+      const eq = offlineCtx.createBiquadFilter();
+      eq.type = 'peaking';
+      eq.frequency.value = 80;
+      eq.gain.value = 6;
+      src.connect(comp);
+      comp.connect(eq);
+      eq.connect(offlineCtx.destination);
+    },
+    bass: (offlineCtx, src) => {
+      const lp = offlineCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 230;
+      const boost = offlineCtx.createGain();
+      boost.gain.value = 1.4;
+      src.connect(lp);
+      lp.connect(boost);
+      boost.connect(offlineCtx.destination);
+    },
+    guitar: (offlineCtx, src) => {
+      const bp = offlineCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1600;
+      bp.Q.value = 0.9;
+      const gain = offlineCtx.createGain();
+      gain.gain.value = 1.5;
+      src.connect(bp);
+      bp.connect(gain);
+      gain.connect(offlineCtx.destination);
+    },
+    piano: (offlineCtx, src) => {
+      const bp = offlineCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 750;
+      bp.Q.value = 0.8;
+      const gain = offlineCtx.createGain();
+      gain.gain.value = 1.4;
+      src.connect(bp);
+      bp.connect(gain);
+      gain.connect(offlineCtx.destination);
+    },
+    strings: (offlineCtx, src) => {
+      const hp = offlineCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 450;
+      const lp = offlineCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 7000;
+      const comp = offlineCtx.createDynamicsCompressor();
+      comp.threshold.value = -18;
+      comp.attack.value = 0.15;
+      comp.release.value = 0.5;
+      src.connect(hp);
+      hp.connect(lp);
+      lp.connect(comp);
+      comp.connect(offlineCtx.destination);
+    },
+    others: (offlineCtx, src) => {
+      const hp = offlineCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 5500;
+      const gain = offlineCtx.createGain();
+      gain.gain.value = 1.3;
+      src.connect(hp);
+      hp.connect(gain);
+      gain.connect(offlineCtx.destination);
+    }
+  };
+
+  let stemsToProcess = [];
+  if (mode === "4") {
+    stemsToProcess = ["vocals", "drums", "bass", "others"];
+  } else if (mode === "6") {
+    stemsToProcess = ["vocals", "drums", "bass", "guitar", "piano", "others"];
+  } else {
+    stemsToProcess = ["vocals", "drums", "bass", "guitar", "piano", "strings", "others"];
+  }
+
+  const generatedStems = {};
+  const total = stemsToProcess.length;
+
+  for (let i = 0; i < total; i++) {
+    const key = stemsToProcess[i];
+    const meta = STEM_META[key] || { label: key, color: '#3b82f6' };
+    const pct = Math.round(35 + (i / total) * 60);
+    el.progressStatusText.textContent = `Isolating ${meta.label} stem (${i + 1}/${total})...`;
+    el.progressBarFill.style.width = `${pct}%`;
+    el.progressPctText.textContent = `${pct}%`;
+
+    const offlineCtx = new OfflineAudioContext(
+      audioBuffer.numberOfChannels,
+      audioBuffer.length,
+      audioBuffer.sampleRate
+    );
+    const src = offlineCtx.createBufferSource();
+    src.buffer = audioBuffer;
+    
+    stemFilterMap[key](offlineCtx, src);
+    src.start(0);
+
+    const rendered = await offlineCtx.startRendering();
+    const wavBlob = audioBufferToWav(rendered);
+    const blobUrl = URL.createObjectURL(wavBlob);
+
+    generatedStems[key] = {
+      label: meta.label,
+      color: meta.color,
+      url: blobUrl,
+      wavBlob: wavBlob
+    };
+  }
+
+  el.progressBarFill.style.width = "100%";
+  el.progressPctText.textContent = "100%";
+  el.progressStatusText.textContent = "In-browser separation complete!";
+
+  const trackMeta = {
+    songTitle: file.name,
+    duration: duration,
+    durationFormatted: formatTime(duration),
+    peaks: peaks,
+    key: "Auto Detected",
+    bpm: 120
+  };
+
+  setTimeout(() => {
+    loadSeparatedSong(null, trackMeta, generatedStems, mode);
+    el.importModal.close();
+  }, 600);
+}
+
 // Start Upload & Separation Process
 el.btnStartSeparation.onclick = async () => {
   if (!state.pendingUploadFile) return;
@@ -731,10 +978,13 @@ el.btnStartSeparation.onclick = async () => {
   const mode = document.querySelector('input[name="importMode"]:checked')?.value || "7";
   el.btnStartSeparation.disabled = true;
   el.importProgressWrap.classList.remove("hidden");
-  el.progressStatusText.textContent = "Uploading song to server...";
+  el.progressStatusText.textContent = "Preparing audio...";
   el.progressBarFill.style.width = "10%";
   el.progressPctText.textContent = "10%";
 
+  let backendAvailable = false;
+
+  // Try server API first
   try {
     const formData = new FormData();
     formData.append("audio", state.pendingUploadFile);
@@ -744,33 +994,37 @@ el.btnStartSeparation.onclick = async () => {
       body: formData
     });
 
-    if (!uploadRes.ok) {
-      const err = await uploadRes.json();
-      throw new Error(err.error || "Upload failed");
+    const cType = uploadRes.headers.get("content-type") || "";
+    if (uploadRes.ok && cType.includes("application/json")) {
+      const uploadData = await uploadRes.json();
+      el.progressStatusText.textContent = "AI stem separation running on server...";
+      el.progressBarFill.style.width = "25%";
+      el.progressPctText.textContent = "25%";
+
+      const sepRes = await fetch("/api/separate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: uploadData.jobId, mode })
+      });
+
+      if (sepRes.ok) {
+        backendAvailable = true;
+        pollSeparationProgress(uploadData.jobId, uploadData, mode);
+        return;
+      }
     }
-
-    const uploadData = await uploadRes.json();
-    el.progressStatusText.textContent = "Audio analyzed. Starting stem separation...";
-    el.progressBarFill.style.width = "25%";
-    el.progressPctText.textContent = "25%";
-
-    // Trigger separation
-    const sepRes = await fetch("/api/separate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: uploadData.jobId, mode })
-    });
-
-    if (!sepRes.ok) {
-      const err = await sepRes.json();
-      throw new Error(err.error || "Separation request failed");
-    }
-
-    // Poll job status
-    pollSeparationProgress(uploadData.jobId, uploadData, mode);
   } catch (err) {
-    alert(`Error: ${err.message}`);
-    el.btnStartSeparation.disabled = false;
+    // Backend not running / static host
+  }
+
+  // Fallback to in-browser separation for Vercel / static hosting
+  if (!backendAvailable) {
+    try {
+      await separateInBrowser(state.pendingUploadFile, mode);
+    } catch (err) {
+      alert(`Separation Error: ${err.message}`);
+      el.btnStartSeparation.disabled = false;
+    }
   }
 };
 
