@@ -45,7 +45,14 @@ const state = {
   downloadSelected: new Set(["vocals", "drums", "bass", "others"]),
 
   // Pending file upload
-  pendingUploadFile: null
+  pendingUploadFile: null,
+
+  // AI GPU Backend URL (Local or Cloudflare Tunnel)
+  backendUrl: localStorage.getItem("icy_backend_url") || (
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
+      ? "" 
+      : "https://bufing-husband-centered-vernon.trycloudflare.com"
+  )
 };
 
 // DOM Elements
@@ -98,6 +105,18 @@ const el = {
   progressPctText: document.getElementById("progressPctText"),
   progressBarFill: document.getElementById("progressBarFill"),
 
+  // Settings & Engine Badge
+  engineStatusBadge: document.getElementById("engineStatusBadge"),
+  engineDot: document.getElementById("engineDot"),
+  engineLabel: document.getElementById("engineLabel"),
+  settingsModal: document.getElementById("settingsModal"),
+  btnCloseSettingsModal: document.getElementById("btnCloseSettingsModal"),
+  btnCancelSettings: document.getElementById("btnCancelSettings"),
+  btnSaveSettings: document.getElementById("btnSaveSettings"),
+  backendUrlInput: document.getElementById("backendUrlInput"),
+  btnTestBackend: document.getElementById("btnTestBackend"),
+  backendTestStatus: document.getElementById("backendTestStatus"),
+
   toastMessage: document.getElementById("toastMessage")
 };
 
@@ -130,6 +149,60 @@ function formatTime(secs) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// Helper to build full backend URL
+function getBackendUrl(path) {
+  let base = (state.backendUrl || "").trim().replace(/\/+$/, "");
+  if (!base && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+    return path;
+  }
+  return base ? `${base}${path}` : path;
+}
+
+// Helper to resolve stem audio URLs
+function resolveAudioUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:")) {
+    return url;
+  }
+  if (url.startsWith("/demo/")) {
+    return url;
+  }
+  let base = (state.backendUrl || "").trim().replace(/\/+$/, "");
+  if (base && url.startsWith("/api/")) {
+    return `${base}${url}`;
+  }
+  return url;
+}
+
+// Check Backend Engine Status
+async function checkBackendStatus() {
+  const badge = el.engineStatusBadge;
+  const dot = el.engineDot;
+  const lbl = el.engineLabel;
+  if (!lbl) return false;
+
+  try {
+    const statusUrl = getBackendUrl("/api/status");
+    const res = await fetch(statusUrl, { method: "GET", mode: "cors" });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.hasDemucs) {
+        dot.className = "status-dot online";
+        lbl.textContent = "Meta Demucs AI GPU (Clean)";
+        if (badge) badge.title = "Connected to Demucs AI GPU. Click to open engine settings.";
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn("Backend check note:", e);
+  }
+
+  dot.className = "status-dot offline";
+  lbl.textContent = "AI Engine: Offline (Setup)";
+  if (badge) badge.title = "Demucs AI Backend not detected. Click to configure live URL.";
+  return false;
+}
+
 // Check which stems to include based on mode
 function getActiveStemKeys(mode = state.activeMode) {
   if (mode === "4") return ["vocals", "drums", "bass", "others"];
@@ -155,7 +228,8 @@ function setupStems(stemsData) {
   activeKeys.forEach(key => {
     const meta = STEM_META[key] || { label: key, color: "#3b82f6" };
     const stemInfo = stemsData[key] || {};
-    const audioUrl = stemInfo.url || `/api/demo/audio/${key}.mp3`;
+    const rawUrl = stemInfo.url || `/demo/${key}.mp3`;
+    const audioUrl = resolveAudioUrl(rawUrl);
 
     const audioEl = new Audio();
     audioEl.crossOrigin = "anonymous";
@@ -629,7 +703,7 @@ el.btnExecuteDownload.onclick = async () => {
 
     let blob = null;
     try {
-      const res = await fetch("/api/download-zip", {
+      const res = await fetch(getBackendUrl("/api/download-zip"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -978,18 +1052,19 @@ el.btnStartSeparation.onclick = async () => {
   const mode = document.querySelector('input[name="importMode"]:checked')?.value || "7";
   el.btnStartSeparation.disabled = true;
   el.importProgressWrap.classList.remove("hidden");
-  el.progressStatusText.textContent = "Preparing audio...";
+  el.progressStatusText.textContent = "Connecting to Meta Demucs AI backend...";
   el.progressBarFill.style.width = "10%";
   el.progressPctText.textContent = "10%";
 
   let backendAvailable = false;
 
-  // Try server API first
+  // Try Demucs AI Backend first
   try {
     const formData = new FormData();
     formData.append("audio", state.pendingUploadFile);
 
-    const uploadRes = await fetch("/api/upload", {
+    const uploadUrl = getBackendUrl("/api/upload");
+    const uploadRes = await fetch(uploadUrl, {
       method: "POST",
       body: formData
     });
@@ -997,11 +1072,12 @@ el.btnStartSeparation.onclick = async () => {
     const cType = uploadRes.headers.get("content-type") || "";
     if (uploadRes.ok && cType.includes("application/json")) {
       const uploadData = await uploadRes.json();
-      el.progressStatusText.textContent = "AI stem separation running on server...";
+      el.progressStatusText.textContent = "Meta Demucs AI neural separation running (RTX GPU)...";
       el.progressBarFill.style.width = "25%";
       el.progressPctText.textContent = "25%";
 
-      const sepRes = await fetch("/api/separate", {
+      const sepUrl = getBackendUrl("/api/separate");
+      const sepRes = await fetch(sepUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId: uploadData.jobId, mode })
@@ -1014,11 +1090,33 @@ el.btnStartSeparation.onclick = async () => {
       }
     }
   } catch (err) {
-    // Backend not running / static host
+    console.warn("Demucs AI backend call failed:", err);
   }
 
-  // Fallback to in-browser separation for Vercel / static hosting
+  // If backend was not reachable, alert the user and offer options
   if (!backendAvailable) {
+    el.importProgressWrap.classList.add("hidden");
+    el.btnStartSeparation.disabled = false;
+    
+    const proceedWithLowQuality = confirm(
+      "⚠️ Meta Demucs AI GPU Backend is unreachable at:\n" +
+      (state.backendUrl || "Local Server") + "\n\n" +
+      "Clean, bleed-free stem separation requires the Meta Demucs AI GPU engine running on your PC (start_public_live.bat).\n\n" +
+      "Click [Cancel] to open Settings and connect your live AI URL for 100% clean stems.\n" +
+      "Click [OK] to proceed with basic in-browser separation (may have audio bleed)."
+    );
+
+    if (!proceedWithLowQuality) {
+      if (el.backendUrlInput) {
+        el.backendUrlInput.value = state.backendUrl || "";
+      }
+      el.settingsModal.showModal();
+      return;
+    }
+
+    // User chose in-browser fallback
+    el.importProgressWrap.classList.remove("hidden");
+    el.btnStartSeparation.disabled = true;
     try {
       await separateInBrowser(state.pendingUploadFile, mode);
     } catch (err) {
@@ -1031,23 +1129,24 @@ el.btnStartSeparation.onclick = async () => {
 function pollSeparationProgress(jobId, metaData, mode) {
   const pollInterval = setInterval(async () => {
     try {
-      const res = await fetch(`/api/job/${jobId}`);
+      const res = await fetch(getBackendUrl(`/api/job/${jobId}`));
       if (!res.ok) throw new Error("Failed to check status");
 
       const job = await res.json();
       el.progressBarFill.style.width = `${job.progress}%`;
       el.progressPctText.textContent = `${job.progress}%`;
-      el.progressStatusText.textContent = job.statusMessage || "Splitting stems...";
+      el.progressStatusText.textContent = job.statusMessage || "Splitting stems with Meta Demucs...";
 
       if (job.status === "completed") {
         clearInterval(pollInterval);
         el.progressBarFill.style.width = "100%";
         el.progressPctText.textContent = "100%";
-        el.progressStatusText.textContent = "Separation complete!";
+        el.progressStatusText.textContent = "AI separation complete! Loading studio stems...";
 
         setTimeout(() => {
           loadSeparatedSong(jobId, metaData, job.stems, mode);
           el.importModal.close();
+          el.importProgressWrap.classList.add("hidden");
         }, 600);
       } else if (job.status === "error") {
         clearInterval(pollInterval);
@@ -1057,7 +1156,7 @@ function pollSeparationProgress(jobId, metaData, mode) {
     } catch (e) {
       console.warn("Poll error:", e);
     }
-  }, 1200);
+  }, 1500);
 }
 
 function loadSeparatedSong(jobId, meta, stems, mode) {
@@ -1075,10 +1174,20 @@ function loadSeparatedSong(jobId, meta, stems, mode) {
   el.keyDisplay.textContent = meta.key || "Gb major";
   el.bpmDisplay.textContent = meta.bpm ? `${meta.bpm} BPM` : "- BPM";
 
-  setupStems(stems);
+  // Ensure all stem URLs are fully resolved
+  const resolvedStems = {};
+  for (const [k, v] of Object.entries(stems)) {
+    resolvedStems[k] = {
+      ...v,
+      url: resolveAudioUrl(v.url),
+      wavUrl: v.wavUrl ? resolveAudioUrl(v.wavUrl) : undefined
+    };
+  }
+
+  setupStems(resolvedStems);
   drawWaveform();
   seekToTime(0);
-  showToast(`Successfully loaded "${state.songTitle}" with ${mode} stems!`);
+  showToast(`Loaded "${state.songTitle}" with clean ${mode}-stem Demucs separation!`);
 }
 
 // Load Demo song on initial startup
@@ -1086,7 +1195,7 @@ async function initDemo() {
   try {
     let demo = null;
     try {
-      const res = await fetch("/api/demo");
+      const res = await fetch(getBackendUrl("/api/demo"));
       if (res.ok) demo = await res.json();
     } catch (e) {}
 
@@ -1108,23 +1217,91 @@ async function initDemo() {
     el.keyDisplay.textContent = demo.key || "Gb major";
     el.bpmDisplay.textContent = demo.bpm ? `${demo.bpm} BPM` : "117 BPM";
 
-    setupStems(demo.stems);
+    // Ensure demo URLs are resolved
+    const resolvedDemoStems = {};
+    for (const [k, v] of Object.entries(demo.stems)) {
+      resolvedDemoStems[k] = {
+        ...v,
+        url: resolveAudioUrl(v.url)
+      };
+    }
+
+    setupStems(resolvedDemoStems);
     drawWaveform();
     seekToTime(0);
-
-    // Update engine badge
-    fetch("/api/status")
-      .then(r => r.json())
-      .then(s => {
-        const lbl = document.getElementById("engineLabel");
-        if (lbl && s.hasDemucs) {
-          lbl.textContent = "Meta Demucs AI Active (Clean Separation)";
-        }
-      })
-      .catch(() => {});
   } catch (err) {
     console.error("Init demo note:", err);
   }
+}
+
+// AI BACKEND SETTINGS MODAL LOGIC
+if (el.engineStatusBadge) {
+  el.engineStatusBadge.onclick = () => {
+    if (el.backendUrlInput) {
+      el.backendUrlInput.value = state.backendUrl || "";
+    }
+    if (el.backendTestStatus) {
+      el.backendTestStatus.textContent = "";
+      el.backendTestStatus.className = "backend-test-status";
+    }
+    el.settingsModal.showModal();
+  };
+}
+
+if (el.btnCloseSettingsModal) {
+  el.btnCloseSettingsModal.onclick = () => {
+    el.settingsModal.close();
+  };
+}
+
+if (el.btnCancelSettings) {
+  el.btnCancelSettings.onclick = () => {
+    el.settingsModal.close();
+  };
+}
+
+if (el.btnTestBackend) {
+  el.btnTestBackend.onclick = async () => {
+    const testUrl = (el.backendUrlInput.value || "").trim().replace(/\/+$/, "");
+    if (!testUrl) {
+      el.backendTestStatus.textContent = "Please enter a backend URL";
+      el.backendTestStatus.className = "backend-test-status error";
+      return;
+    }
+    el.backendTestStatus.textContent = "Testing connection...";
+    el.backendTestStatus.className = "backend-test-status loading";
+
+    try {
+      const res = await fetch(`${testUrl}/api/status`, { method: "GET", mode: "cors" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.hasDemucs) {
+          el.backendTestStatus.textContent = "Connected! Meta Demucs AI Ready (Zero Bleed)";
+          el.backendTestStatus.className = "backend-test-status success";
+        } else {
+          el.backendTestStatus.textContent = "Connected, but Demucs AI not ready on server";
+          el.backendTestStatus.className = "backend-test-status error";
+        }
+      } else {
+        el.backendTestStatus.textContent = `Server error HTTP ${res.status}`;
+        el.backendTestStatus.className = "backend-test-status error";
+      }
+    } catch (err) {
+      el.backendTestStatus.textContent = "Could not reach server. Check tunnel URL";
+      el.backendTestStatus.className = "backend-test-status error";
+    }
+  };
+}
+
+if (el.btnSaveSettings) {
+  el.btnSaveSettings.onclick = async () => {
+    const newUrl = (el.backendUrlInput.value || "").trim().replace(/\/+$/, "");
+    state.backendUrl = newUrl;
+    localStorage.setItem("icy_backend_url", newUrl);
+    el.settingsModal.close();
+    showToast("AI Engine URL saved! Connecting...");
+    await checkBackendStatus();
+  };
 }
 
 // Attach Play/Pause Button
@@ -1136,6 +1313,7 @@ window.addEventListener("resize", () => {
 });
 
 // Run demo initialization on DOM load
-window.addEventListener("DOMContentLoaded", () => {
-  initDemo();
+window.addEventListener("DOMContentLoaded", async () => {
+  await initDemo();
+  await checkBackendStatus();
 });
