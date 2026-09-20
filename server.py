@@ -168,9 +168,11 @@ def start_separation():
             job["status"] = "completed"
             job["progress"] = 100
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             job["status"] = "error"
             job["error"] = str(e)
-            print(f"Error in separation worker: {e}", file=sys.stderr)
+            print(f"Error in separation worker: {e}", file=sys.stderr, flush=True)
 
     thread = threading.Thread(target=run_worker, daemon=True)
     thread.start()

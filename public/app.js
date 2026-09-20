@@ -48,11 +48,13 @@ const state = {
   pendingUploadFile: null,
 
   // AI GPU Backend URL (Local or Cloudflare Tunnel)
-  backendUrl: localStorage.getItem("icy_backend_url") || (
-    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
+  backendUrl: (function() {
+    const saved = localStorage.getItem("icy_backend_url");
+    if (saved && !saved.includes("bufing-husband-centered-vernon")) return saved;
+    return (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
       ? "" 
-      : "https://bufing-husband-centered-vernon.trycloudflare.com"
-  )
+      : "https://middle-hands-bacon-savings.trycloudflare.com";
+  })()
 };
 
 // DOM Elements

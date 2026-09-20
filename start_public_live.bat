@@ -1,4 +1,5 @@
 @echo off
+set PYTHONUNBUFFERED=1
 title ICY MUSIC SPLITTER - LIVE ONLINE
 echo ========================================================
 echo         ICY MUSIC SPLITTER - PUBLIC ONLINE SERVER

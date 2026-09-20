@@ -13,6 +13,7 @@ Handles:
 3. Support for both Meta Demucs (if installed) and Built-in High-Fidelity DSP/FFmpeg Filter Engine.
 """
 
+import re
 import os
 import sys
 import json
@@ -54,7 +55,7 @@ class AudioSeparator:
             "-of", "json",
             file_path
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True)
         meta = json.loads(res.stdout) if res.stdout else {}
         
         format_info = meta.get("format", {})
@@ -97,7 +98,7 @@ class AudioSeparator:
                 "-f", "s16le",
                 "-"
             ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             raw_data, _ = proc.communicate()
             
             if not raw_data:
@@ -309,7 +310,7 @@ class AudioSeparator:
                 "-b:a", "192k",
                 out_mp3
             ]
-            subprocess.run(cmd, check=True)
+            subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
             # Also create WAV for lossless download
             cmd_wav = [
@@ -318,7 +319,7 @@ class AudioSeparator:
                 "-i", out_mp3,
                 out_wav
             ]
-            subprocess.run(cmd_wav, check=True)
+            subprocess.run(cmd_wav, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
             results[stem_name] = {
                 "name": stem_name,
@@ -348,9 +349,49 @@ class AudioSeparator:
         ]
         
         if progress_callback:
-            progress_callback(20, "Separating audio sources with neural network...")
+            progress_callback(20, "Separating audio sources with neural network (0%)...")
 
-        subprocess.run(cmd, check=True)
+        # Launch process with explicit DEVNULL stdin to avoid WinError 22 / [Errno 22] Invalid argument
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace"
+        )
+
+        last_pct = 20
+        captured_output = []
+        buffer = ""
+
+        # Stream progress live from tqdm output
+        while True:
+            char = proc.stdout.read(1)
+            if not char:
+                break
+            if char in ('\r', '\n'):
+                line = buffer.strip()
+                if line:
+                    captured_output.append(line)
+                    m = re.search(r'(\d+)%', line)
+                    if m and progress_callback:
+                        raw_pct = int(m.group(1))
+                        scaled_pct = 20 + int(raw_pct * 0.65)
+                        if scaled_pct > last_pct:
+                            last_pct = scaled_pct
+                            progress_callback(scaled_pct, f"Separating audio sources with neural network ({raw_pct}%)...")
+                buffer = ""
+            else:
+                buffer += char
+                if len(buffer) > 500:
+                    buffer = buffer[-200:]
+
+        return_code = proc.wait()
+        if return_code != 0:
+            err_details = "\n".join(captured_output[-15:]) if captured_output else f"Exit code {return_code}"
+            raise RuntimeError(f"Demucs separation process failed:\n{err_details}")
 
         filename_no_ext = os.path.splitext(os.path.basename(input_path))[0]
         demucs_out_dir = os.path.join(output_dir, model_name, filename_no_ext)
@@ -373,7 +414,13 @@ class AudioSeparator:
             
             if os.path.exists(src_file):
                 shutil.copy(src_file, dest_wav)
-                subprocess.run([self.ffmpeg, "-y", "-i", dest_wav, "-b:a", "256k", dest_mp3], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    [self.ffmpeg, "-y", "-i", dest_wav, "-b:a", "256k", dest_mp3],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True
+                )
                 results[dest_name] = {
                     "name": dest_name,
                     "label": info["label"],
@@ -385,7 +432,7 @@ class AudioSeparator:
         # If 7 stems requested, cleanly extract Strings and phase-subtract from Others
         if mode == "7" and "others" in results:
             if progress_callback:
-                progress_callback(85, "Isolating Strings from Other stem with zero bleed...")
+                progress_callback(88, "Isolating Strings from Other stem with zero bleed...")
             
             strings_wav = os.path.join(output_dir, "strings.wav")
             strings_mp3 = os.path.join(output_dir, "strings.mp3")
@@ -398,8 +445,11 @@ class AudioSeparator:
                 self.ffmpeg, "-y", "-i", others_wav,
                 "-af", "highpass=f=400,lowpass=f=6800,compand=attacks=0.15:decays=0.6:points=-80/-80|-20/-6|0/0",
                 strings_wav
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run([self.ffmpeg, "-y", "-i", strings_wav, "-b:a", "256k", strings_mp3], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            
+            subprocess.run([
+                self.ffmpeg, "-y", "-i", strings_wav, "-b:a", "256k", strings_mp3
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
             # 2. Subtract strings from others via phase cancellation so there is zero bleed
             try:
@@ -407,10 +457,12 @@ class AudioSeparator:
                     self.ffmpeg, "-y", "-i", others_wav, "-i", strings_wav,
                     "-filter_complex", "[1:a]volume=-0.85[inv];[0:a][inv]amix=inputs=2:normalize=0",
                     others_clean_wav
-                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 if os.path.exists(others_clean_wav):
                     shutil.move(others_clean_wav, others_wav)
-                    subprocess.run([self.ffmpeg, "-y", "-i", others_wav, "-b:a", "256k", others_mp3], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run([
+                        self.ffmpeg, "-y", "-i", others_wav, "-b:a", "256k", others_mp3
+                    ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             except Exception as e:
                 print(f"Phase subtraction note: {e}", file=sys.stderr)
 
