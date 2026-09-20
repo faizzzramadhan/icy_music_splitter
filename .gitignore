@@ -14,6 +14,10 @@ uploads/*
 output/*
 !output/.gitkeep
 
+# Large binaries
+cloudflared.exe
+*.exe
+
 # Large models cache (demucs downloads into torch hub / cache)
 .cache/
 torch/

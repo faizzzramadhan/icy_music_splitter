@@ -107,4 +107,3 @@ ICY MUSIC SPLITTER/
 1. Sign in to [Render.com](https://render.com) or [Railway.app](https://railway.app).
 2. Choose **New Web Service** -> Connect GitHub repository.
 3. Select **Docker** environment -> Deploy!
-
