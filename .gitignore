@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+ENV/
+
+# ICY MUSIC SPLITTER runtime data
+uploads/*
+!uploads/.gitkeep
+output/*
+!output/.gitkeep
+
+# Large models cache (demucs downloads into torch hub / cache)
+.cache/
+torch/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

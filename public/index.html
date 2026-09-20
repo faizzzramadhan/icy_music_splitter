@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ICY MUSIC SPLITTER - AI & Studio Stem Separation</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- TOP APP NAVBAR -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">ICY MUSIC SPLITTER</span>
+          <span class="brand-badge">STUDIO AI</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="engine-badge" id="engineStatusBadge" title="Audio Separation Engine">
+          <span class="status-dot online"></span>
+          <span id="engineLabel">Studio DSP & AI Ready</span>
+        </div>
+        <button class="btn btn-secondary" id="btnOpenImport">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          Import a new song
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN STUDIO WORKSPACE -->
+    <main class="studio-layout">
+      <!-- LEFT STEMS MIXER RACK -->
+      <section class="stems-panel">
+        <div class="stems-panel-header">
+          <div class="track-select-wrapper">
+            <select id="trackCountSelector" class="track-count-dropdown">
+              <option value="7">7 tracks (Full Studio)</option>
+              <option value="6">6 tracks</option>
+              <option value="4">4 tracks</option>
+            </select>
+            <svg class="dropdown-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <span class="stems-count-tag" id="activeStemsCount">7 active stems</span>
+        </div>
+
+        <div class="stems-rack" id="stemsRack">
+          <!-- Dynamically populated stem mixer channels -->
+        </div>
+      </section>
+
+      <!-- RIGHT PLAYER & WAVEFORM WORKSPACE -->
+      <section class="player-panel">
+        <!-- PLAYER HEADER ROW -->
+        <div class="player-header-row">
+          <button class="btn-play-pause" id="btnPlayPause" aria-label="Play / Pause">
+            <svg class="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <polygon points="6 3 20 12 6 21 6 3"></polygon>
+            </svg>
+            <svg class="icon-pause hidden" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16"></rect>
+              <rect x="14" y="4" width="4" height="16"></rect>
+            </svg>
+          </button>
+
+          <div class="track-title-info">
+            <h1 class="track-title" id="trackTitleDisplay">act viii_ i hate to be alone.mp3</h1>
+            <span class="track-mode-badge" id="currentTrackModeBadge">Master Mix &middot; 7 Stems</span>
+          </div>
+
+          <div class="player-top-actions">
+            <button class="btn-icon" id="btnResetTrack" title="Reset playback to start">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="1 4 1 10 7 10"></polyline>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+              </svg>
+            </button>
+            <button class="btn btn-outline" id="btnTopImport">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Import a new song
+            </button>
+          </div>
+        </div>
+
+        <!-- WAVEFORM DISPLAY CONTAINER -->
+        <div class="waveform-container" id="waveformWrapper">
+          <canvas id="waveformCanvas" width="1000" height="130"></canvas>
+          <div class="playhead" id="waveformPlayhead"></div>
+          <div class="time-readout time-elapsed" id="timeElapsed">0:00</div>
+          <div class="time-readout time-total" id="timeTotal">0:28</div>
+          <div class="waveform-hover-time" id="waveformHoverTime">0:00</div>
+        </div>
+
+        <!-- TRANSPORT CONTROLS & MUSICAL METERS -->
+        <div class="transport-controls-row">
+          <div class="meter-pill speed-controller">
+            <button class="speed-step-btn" id="btnSpeedDown" title="Decrease speed">&minus;</button>
+            <span class="speed-val" id="speedDisplay">1.00 x</span>
+            <button class="speed-step-btn" id="btnSpeedUp" title="Increase speed">&plus;</button>
+          </div>
+
+          <button class="transport-btn" id="btnLoop" title="Toggle Loop">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="17 1 21 5 17 9"></polyline>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+              <polyline points="7 23 3 19 7 15"></polyline>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+            </svg>
+            <span>Loop</span>
+          </button>
+
+          <div class="meter-pill pitch-controller">
+            <button class="pitch-step-btn" id="btnPitchDown" title="Transpose Down (&flat;)">&#9837;</button>
+            <span class="pitch-val" id="pitchDisplay">0 st</span>
+            <button class="pitch-step-btn" id="btnPitchUp" title="Transpose Up (&sharp;)">&#9839;</button>
+          </div>
+
+          <div class="meter-card bpm-card" title="Detected Tempo">
+            <span class="meter-val" id="bpmDisplay">- BPM</span>
+          </div>
+
+          <div class="meter-card key-card" title="Detected Musical Key">
+            <span class="meter-val" id="keyDisplay">Gb major</span>
+          </div>
+        </div>
+
+        <!-- BOTTOM PRIMARY ACTIONS -->
+        <div class="player-bottom-actions">
+          <button class="btn btn-red" id="btnOpenStudio">
+            Open in Studio
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+
+          <button class="btn btn-white" id="btnOpenDownloadModal">
+            Download Stems
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- DOWNLOAD STEMS MODAL (MATCHING SCREENSHOT 1) -->
+    <dialog class="modal-dialog" id="downloadModal">
+      <div class="modal-content download-modal-box">
+        <div class="modal-header">
+          <h2 class="modal-title">Select tracks to download as audio</h2>
+          <button class="btn-close-modal" id="btnCloseDownloadModal" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Format Picker -->
+        <div class="format-choice-bar">
+          <span class="format-label">Audio Format:</span>
+          <label class="radio-label">
+            <input type="radio" name="downloadFormat" value="mp3" checked>
+            <span>MP3 (Compact)</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="downloadFormat" value="wav">
+            <span>WAV (Lossless 16-bit)</span>
+          </label>
+        </div>
+
+        <!-- STEMS CHECKLIST -->
+        <div class="download-stems-list" id="downloadStemsList">
+          <!-- Populated dynamically matching screenshot 1 -->
+        </div>
+
+        <!-- SELECT ALL / CLEAR ALL -->
+        <div class="download-selection-controls">
+          <button type="button" class="btn-link" id="btnSelectAllStems">Select All</button>
+          <button type="button" class="btn-link" id="btnClearAllStems">Clear All</button>
+        </div>
+
+        <!-- DOWNLOAD ACTION BUTTON -->
+        <div class="download-action-wrap">
+          <button class="btn btn-pill-white" id="btnExecuteDownload">
+            <span class="btn-text">Download as audio</span>
+            <div class="btn-spinner hidden" id="downloadSpinner"></div>
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- IMPORT SONG MODAL -->
+    <dialog class="modal-dialog" id="importModal">
+      <div class="modal-content import-modal-box">
+        <div class="modal-header">
+          <h2 class="modal-title">Import audio to split</h2>
+          <button class="btn-close-modal" id="btnCloseImportModal" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <div class="dropzone" id="audioDropzone">
+          <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg" hidden>
+          <div class="dropzone-icon">
+            <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+          </div>
+          <p class="dropzone-primary">Drag & drop your song here, or <span class="browse-link">browse</span></p>
+          <p class="dropzone-hint">Supports MP3, WAV, FLAC, M4A, OGG &middot; Up to 150MB</p>
+        </div>
+
+        <!-- STEM MODE SELECTOR -->
+        <div class="import-mode-select">
+          <label class="section-label">Select Separation Mode:</label>
+          <div class="mode-options">
+            <label class="mode-card">
+              <input type="radio" name="importMode" value="7" checked>
+              <div class="mode-card-content">
+                <span class="mode-card-title">7 Stems (Full Studio)</span>
+                <span class="mode-card-sub">Vocals, Drums, Bass, Guitar, Piano, Strings, Others</span>
+              </div>
+            </label>
+            <label class="mode-card">
+              <input type="radio" name="importMode" value="6">
+              <div class="mode-card-content">
+                <span class="mode-card-title">6 Stems</span>
+                <span class="mode-card-sub">Vocals, Drums, Bass, Guitar, Piano, Others</span>
+              </div>
+            </label>
+            <label class="mode-card">
+              <input type="radio" name="importMode" value="4">
+              <div class="mode-card-content">
+                <span class="mode-card-title">4 Stems</span>
+                <span class="mode-card-sub">Vocals, Drums, Bass, Others</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- PROGRESS CONTAINER -->
+        <div class="progress-wrap hidden" id="importProgressWrap">
+          <div class="progress-info">
+            <span class="progress-status-text" id="progressStatusText">Uploading song...</span>
+            <span class="progress-pct" id="progressPctText">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progressBarFill"></div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelImport">Cancel</button>
+          <button class="btn btn-red" id="btnStartSeparation" disabled>
+            Split Stems Now
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- TOAST NOTIFICATION -->
+    <div class="toast-message" id="toastMessage"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
